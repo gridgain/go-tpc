@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/go-tpc/pkg/measurement"
@@ -106,6 +107,9 @@ type Workloader struct {
 
 	txns []txn
 
+	// atomic counter for history table PK (GridGain requires explicit PK)
+	historyID atomic.Int64
+
 	// stats
 	rtMeasurement       *measurement.Measurement
 	waitTimeMeasurement *measurement.Measurement
@@ -150,6 +154,16 @@ func NewWorkloader(db *sql.DB, cfg *Config) (workload.Workloader, error) {
 		ddlManager:          newDDLManager(cfg.Parts, cfg.UseFK, cfg.Warehouses, cfg.PartitionType, cfg.UseClusteredIndex),
 		rtMeasurement:       measurement.NewMeasurement(resetMaxLat),
 		waitTimeMeasurement: measurement.NewMeasurement(resetMaxLat),
+	}
+	// Initialize history ID counter past existing data
+	if cfg.Driver == "odbc" && db != nil {
+		var maxID sql.NullInt64
+		if err := db.QueryRow("SELECT MAX(h_id) FROM history").Scan(&maxID); err == nil && maxID.Valid {
+			w.historyID.Store(maxID.Int64)
+		} else {
+			// Fallback: estimate from warehouse config
+			w.historyID.Store(int64(cfg.Warehouses) * int64(districtPerWarehouse) * int64(customerPerDistrict))
+		}
 	}
 
 	w.txns = []txn{
@@ -281,7 +295,11 @@ func (w *Workloader) Run(ctx context.Context, threadID int) (err error) {
 		}
 		for i := 5; i <= 15; i++ {
 			s.newOrderStmts[newOrderSelectItemSQLs[i]] = prepareStmt(w.cfg.Driver, ctx, s.Conn, newOrderSelectItemSQLs[i])
-			s.newOrderStmts[newOrderSelectStockSQLs[i]] = prepareStmt(w.cfg.Driver, ctx, s.Conn, newOrderSelectStockSQLs[i])
+			if w.cfg.Driver == "odbc" {
+				s.newOrderStmts[newOrderSelectStockSQLsODBC[i]] = prepareStmt(w.cfg.Driver, ctx, s.Conn, newOrderSelectStockSQLsODBC[i])
+			} else {
+				s.newOrderStmts[newOrderSelectStockSQLs[i]] = prepareStmt(w.cfg.Driver, ctx, s.Conn, newOrderSelectStockSQLs[i])
+			}
 			s.newOrderStmts[newOrderInsertOrderLineSQLs[i]] = prepareStmt(w.cfg.Driver, ctx, s.Conn, newOrderInsertOrderLineSQLs[i])
 		}
 
@@ -295,7 +313,11 @@ func (w *Workloader) Run(ctx context.Context, threadID int) (err error) {
 			paymentSelectCustomerData:       prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentSelectCustomerData),
 			paymentUpdateCustomerWithData:   prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentUpdateCustomerWithData),
 			paymentUpdateCustomer:           prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentUpdateCustomer),
-			paymentInsertHistory:            prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentInsertHistory),
+		}
+		if w.cfg.Driver == "odbc" {
+			s.paymentStmts[paymentInsertHistoryODBC] = prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentInsertHistoryODBC)
+		} else {
+			s.paymentStmts[paymentInsertHistory] = prepareStmt(w.cfg.Driver, ctx, s.Conn, paymentInsertHistory)
 		}
 
 		s.orderStatusStmts = map[string]*sql.Stmt{
@@ -305,14 +327,26 @@ func (w *Workloader) Run(ctx context.Context, threadID int) (err error) {
 			orderStatusSelectLatestOrder:       prepareStmt(w.cfg.Driver, ctx, s.Conn, orderStatusSelectLatestOrder),
 			orderStatusSelectOrderLine:         prepareStmt(w.cfg.Driver, ctx, s.Conn, orderStatusSelectOrderLine),
 		}
-		s.deliveryStmts = map[string]*sql.Stmt{
-			deliverySelectNewOrder:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectNewOrder),
-			deliveryDeleteNewOrder:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryDeleteNewOrder),
-			deliveryUpdateOrder:     prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrder),
-			deliverySelectOrders:    prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectOrders),
-			deliveryUpdateOrderLine: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrderLine),
-			deliverySelectSumAmount: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectSumAmount),
-			deliveryUpdateCustomer:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateCustomer),
+		if w.cfg.Driver == "odbc" {
+			s.deliveryStmts = map[string]*sql.Stmt{
+				deliverySelectNewOrderODBC:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectNewOrderODBC),
+				deliveryDeleteNewOrderODBC:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryDeleteNewOrderODBC),
+				deliveryUpdateOrderODBC:     prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrderODBC),
+				deliverySelectOrdersODBC:    prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectOrdersODBC),
+				deliveryUpdateOrderLineODBC: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrderLineODBC),
+				deliverySelectSumAmountODBC: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectSumAmountODBC),
+				deliveryUpdateCustomer:      prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateCustomer),
+			}
+		} else {
+			s.deliveryStmts = map[string]*sql.Stmt{
+				deliverySelectNewOrder:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectNewOrder),
+				deliveryDeleteNewOrder:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryDeleteNewOrder),
+				deliveryUpdateOrder:     prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrder),
+				deliverySelectOrders:    prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectOrders),
+				deliveryUpdateOrderLine: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateOrderLine),
+				deliverySelectSumAmount: prepareStmt(w.cfg.Driver, ctx, s.Conn, deliverySelectSumAmount),
+				deliveryUpdateCustomer:  prepareStmt(w.cfg.Driver, ctx, s.Conn, deliveryUpdateCustomer),
+			}
 		}
 		s.stockLevelStmt = map[string]*sql.Stmt{
 			stockLevelSelectDistrict: prepareStmt(w.cfg.Driver, ctx, s.Conn, stockLevelSelectDistrict),

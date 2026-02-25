@@ -13,15 +13,17 @@ const (
 	paymentSelectWarehouse          = `SELECT w_street_1, w_street_2, w_city, w_state, w_zip, w_name FROM warehouse WHERE w_id = ?`
 	paymentSelectCustomerListByLast = `SELECT c_id FROM customer WHERE c_w_id = ? AND c_d_id = ? AND c_last = ? ORDER BY c_first`
 	paymentSelectCustomerForUpdate  = `SELECT c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone,
-c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = ? AND c_d_id = ? 
+c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = ? AND c_d_id = ?
 AND c_id = ? FOR UPDATE`
-	paymentUpdateCustomer = `UPDATE customer SET c_balance = c_balance - ?, c_ytd_payment = c_ytd_payment + ?, 
+	paymentUpdateCustomer = `UPDATE customer SET c_balance = c_balance - ?, c_ytd_payment = c_ytd_payment + ?,
 c_payment_cnt = c_payment_cnt + 1 WHERE c_w_id = ? AND c_d_id = ? AND c_id = ?`
 	paymentSelectCustomerData     = `SELECT c_data FROM customer WHERE c_w_id = ? AND c_d_id = ? AND c_id = ?`
-	paymentUpdateCustomerWithData = `UPDATE customer SET c_balance = c_balance - ?, c_ytd_payment = c_ytd_payment + ?, 
+	paymentUpdateCustomerWithData = `UPDATE customer SET c_balance = c_balance - ?, c_ytd_payment = c_ytd_payment + ?,
 c_payment_cnt = c_payment_cnt + 1, c_data = ? WHERE c_w_id = ? AND c_d_id = ? AND c_id = ?`
 	paymentInsertHistory = `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+	paymentInsertHistoryODBC = `INSERT INTO history (h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data, h_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 )
 
 type paymentData struct {
@@ -174,8 +176,15 @@ func (w *Workloader) runPayment(ctx context.Context, thread int) error {
 
 	// Process 10
 	hData := fmt.Sprintf("%10s    %10s", d.wName, d.dName)
-	if _, err := s.paymentStmts[paymentInsertHistory].ExecContext(ctx, d.cDID, d.cWID, d.cID, d.dID, d.wID, time.Now().Format(timeFormat), d.hAmount, hData); err != nil {
-		return fmt.Errorf("exec %s failed %v", paymentInsertHistory, err)
+	if w.cfg.Driver == "odbc" {
+		hID := w.historyID.Add(1)
+		if _, err := s.paymentStmts[paymentInsertHistoryODBC].ExecContext(ctx, d.cDID, d.cWID, d.cID, d.dID, d.wID, time.Now(), d.hAmount, hData, hID); err != nil {
+			return fmt.Errorf("exec %s failed %v", paymentInsertHistoryODBC, err)
+		}
+	} else {
+		if _, err := s.paymentStmts[paymentInsertHistory].ExecContext(ctx, d.cDID, d.cWID, d.cID, d.dID, d.wID, time.Now().Format(timeFormat), d.hAmount, hData); err != nil {
+			return fmt.Errorf("exec %s failed %v", paymentInsertHistory, err)
+		}
 	}
 
 	return tx.Commit()

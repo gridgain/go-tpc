@@ -25,6 +25,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	// pg
 	"github.com/lib/pq"
+
+	// odbc
+	odbc "github.com/alexbrainman/odbc"
 )
 
 var (
@@ -62,6 +65,7 @@ const (
 	createDBDDL   = "CREATE DATABASE "
 	mysqlDriver   = "mysql"
 	pgDriver      = "postgres"
+	odbcDriver    = "odbc"
 	customTlsName = "custom"
 )
 
@@ -131,6 +135,13 @@ func newDB(targets []string, driver string, user string, password string, dbName
 			}
 			names[i] = dsn
 			drv = &pq.Driver{}
+		case odbcDriver:
+			dsn := fmt.Sprintf("Driver={GridGain 9};Address=%s;", addr)
+			if len(connParams) > 0 {
+				dsn = dsn + connParams
+			}
+			names[i] = dsn
+			drv = &odbc.Driver{}
 		default:
 			panic(fmt.Errorf("unknown driver: %q", driver))
 		}
@@ -151,6 +162,13 @@ func newDB(targets []string, driver string, user string, password string, dbName
 
 func closeDB() {
 	if globalDB != nil {
+		if driver == odbcDriver {
+			// GridGain ODBC driver crashes (segfault in SQLFreeHandle) when
+			// closing connection pool after statements have been freed.
+			// Skip explicit close — OS will clean up on process exit.
+			globalDB = nil
+			return
+		}
 		globalDB.Close()
 	}
 	globalDB = nil
@@ -166,7 +184,11 @@ func openDB() {
 		panic(err)
 	}
 	if err := globalDB.Ping(); err != nil {
-		if isDBNotExist(err) {
+		if driver == odbcDriver {
+			// GridGain via ODBC: no CREATE DATABASE support, just fail
+			fmt.Printf("failed to ping db, err %v\n", err)
+			globalDB = nil
+		} else if isDBNotExist(err) {
 			tmpDB, _ = newDB(targets, driver, user, password, "", connParams)
 			defer tmpDB.Close()
 			if _, err := tmpDB.Exec(createDBDDL + dbName); err != nil {
@@ -191,6 +213,8 @@ func isDBNotExist(err error) bool {
 	case pgDriver:
 		msg := err.Error()
 		return strings.HasPrefix(msg, "pq: database") && strings.HasSuffix(msg, "does not exist")
+	case odbcDriver:
+		return false
 	}
 	return false
 }
@@ -216,7 +240,7 @@ func main() {
 	rootCmd.PersistentFlags().IntVarP(&statusPort, "statusPort", "S", 10080, "Database status port")
 	rootCmd.PersistentFlags().IntVarP(&threads, "threads", "T", 1, "Thread concurrency")
 	rootCmd.PersistentFlags().IntVarP(&acThreads, "acThreads", "t", 1, "OLAP client concurrency, only for CH-benCHmark")
-	rootCmd.PersistentFlags().StringVarP(&driver, "driver", "d", mysqlDriver, "Database driver: mysql, postgres")
+	rootCmd.PersistentFlags().StringVarP(&driver, "driver", "d", mysqlDriver, "Database driver: mysql, postgres, odbc")
 	rootCmd.PersistentFlags().DurationVar(&totalTime, "time", 1<<63-1, "Total execution time")
 	rootCmd.PersistentFlags().IntVar(&totalCount, "count", 0, "Total execution count, 0 means infinite")
 	rootCmd.PersistentFlags().BoolVar(&dropData, "dropdata", false, "Cleanup data before prepare")

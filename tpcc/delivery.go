@@ -31,6 +31,14 @@ const (
 	(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?),(?,?,?)
 ) GROUP BY ol_d_id`
 	deliveryUpdateCustomer = `UPDATE customer SET c_balance = c_balance + ?, c_delivery_cnt = c_delivery_cnt + 1 WHERE c_w_id = ? AND c_d_id = ? AND c_id = ?`
+
+	// ODBC/GridGain variants — no row-value IN, no FOR UPDATE, no LIMIT
+	deliverySelectNewOrderODBC = "SELECT no_o_id FROM new_order WHERE no_w_id = ? AND no_d_id = ? ORDER BY no_o_id ASC FETCH FIRST 1 ROWS ONLY"
+	deliveryDeleteNewOrderODBC = `DELETE FROM new_order WHERE (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?) OR (no_w_id=? AND no_d_id=? AND no_o_id=?)`
+	deliveryUpdateOrderODBC = `UPDATE orders SET o_carrier_id = ? WHERE (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?)`
+	deliverySelectOrdersODBC = `SELECT o_d_id, o_c_id FROM orders WHERE (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?) OR (o_w_id=? AND o_d_id=? AND o_id=?)`
+	deliveryUpdateOrderLineODBC = `UPDATE order_line SET ol_delivery_d = ? WHERE (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?)`
+	deliverySelectSumAmountODBC = `SELECT ol_d_id, SUM(ol_amount) FROM order_line WHERE (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) OR (ol_w_id=? AND ol_d_id=? AND ol_o_id=?) GROUP BY ol_d_id`
 )
 
 func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
@@ -39,6 +47,22 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 	d := deliveryData{
 		wID:        randInt(s.R, 1, w.cfg.Warehouses),
 		oCarrierID: randInt(s.R, 1, 10),
+	}
+
+	// Pick the right statement keys based on driver
+	selectNewOrderKey := deliverySelectNewOrder
+	deleteNewOrderKey := deliveryDeleteNewOrder
+	updateOrderKey := deliveryUpdateOrder
+	selectOrdersKey := deliverySelectOrders
+	updateOrderLineKey := deliveryUpdateOrderLine
+	selectSumAmountKey := deliverySelectSumAmount
+	if w.cfg.Driver == "odbc" {
+		selectNewOrderKey = deliverySelectNewOrderODBC
+		deleteNewOrderKey = deliveryDeleteNewOrderODBC
+		updateOrderKey = deliveryUpdateOrderODBC
+		selectOrdersKey = deliverySelectOrdersODBC
+		updateOrderLineKey = deliveryUpdateOrderLineODBC
+		selectSumAmountKey = deliverySelectSumAmountODBC
 	}
 
 	tx, err := w.beginTx(ctx)
@@ -53,14 +77,14 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 	}
 	orders := make([]deliveryOrder, 10)
 	for i := 0; i < districtPerWarehouse; i++ {
-		if err = s.deliveryStmts[deliverySelectNewOrder].QueryRowContext(ctx, d.wID, i+1).Scan(&orders[i].oID); err == sql.ErrNoRows {
+		if err = s.deliveryStmts[selectNewOrderKey].QueryRowContext(ctx, d.wID, i+1).Scan(&orders[i].oID); err == sql.ErrNoRows {
 			continue
 		} else if err != nil {
-			return fmt.Errorf("exec %s failed %v", deliverySelectNewOrder, err)
+			return fmt.Errorf("exec %s failed %v", selectNewOrderKey, err)
 		}
 	}
 
-	if _, err = s.deliveryStmts[deliveryDeleteNewOrder].ExecContext(ctx,
+	if _, err = s.deliveryStmts[deleteNewOrderKey].ExecContext(ctx,
 		d.wID, 1, orders[0].oID,
 		d.wID, 2, orders[1].oID,
 		d.wID, 3, orders[2].oID,
@@ -72,10 +96,10 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 		d.wID, 9, orders[8].oID,
 		d.wID, 10, orders[9].oID,
 	); err != nil {
-		return fmt.Errorf("exec %s failed %v", deliveryDeleteNewOrder, err)
+		return fmt.Errorf("exec %s failed %v", deleteNewOrderKey, err)
 	}
 
-	if _, err = s.deliveryStmts[deliveryUpdateOrder].ExecContext(ctx, d.oCarrierID,
+	if _, err = s.deliveryStmts[updateOrderKey].ExecContext(ctx, d.oCarrierID,
 		d.wID, 1, orders[0].oID,
 		d.wID, 2, orders[1].oID,
 		d.wID, 3, orders[2].oID,
@@ -87,10 +111,10 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 		d.wID, 9, orders[8].oID,
 		d.wID, 10, orders[9].oID,
 	); err != nil {
-		return fmt.Errorf("exec %s failed %v", deliveryUpdateOrder, err)
+		return fmt.Errorf("exec %s failed %v", updateOrderKey, err)
 	}
 
-	orderRows, err := s.deliveryStmts[deliverySelectOrders].QueryContext(ctx,
+	orderRows, err := s.deliveryStmts[selectOrdersKey].QueryContext(ctx,
 		d.wID, 1, orders[0].oID,
 		d.wID, 2, orders[1].oID,
 		d.wID, 3, orders[2].oID,
@@ -103,21 +127,27 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 		d.wID, 10, orders[9].oID,
 	)
 	if err != nil {
-		return fmt.Errorf("exec %s failed %v", deliverySelectOrders, err)
+		return fmt.Errorf("exec %s failed %v", selectOrdersKey, err)
 	}
 	defer orderRows.Close()
 	for orderRows.Next() {
 		var dID, cID int
 		if err = orderRows.Scan(&dID, &cID); err != nil {
-			return fmt.Errorf("exec %s failed %v", deliverySelectOrders, err)
+			return fmt.Errorf("exec %s failed %v", selectOrdersKey, err)
 		}
 		orders[dID-1].cID = cID
 	}
 	if err := orderRows.Err(); err != nil {
-		return fmt.Errorf("exec %s failed %v", deliverySelectOrders, err)
+		return fmt.Errorf("exec %s failed %v", selectOrdersKey, err)
 	}
 
-	if _, err = s.deliveryStmts[deliveryUpdateOrderLine].ExecContext(ctx, time.Now().Format(timeFormat),
+	var olDeliveryD interface{}
+	if w.cfg.Driver == "odbc" {
+		olDeliveryD = time.Now()
+	} else {
+		olDeliveryD = time.Now().Format(timeFormat)
+	}
+	if _, err = s.deliveryStmts[updateOrderLineKey].ExecContext(ctx, olDeliveryD,
 		d.wID, 1, orders[0].oID,
 		d.wID, 2, orders[1].oID,
 		d.wID, 3, orders[2].oID,
@@ -129,10 +159,10 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 		d.wID, 9, orders[8].oID,
 		d.wID, 10, orders[9].oID,
 	); err != nil {
-		return fmt.Errorf("exec %s failed %v", deliveryUpdateOrderLine, err)
+		return fmt.Errorf("exec %s failed %v", updateOrderLineKey, err)
 	}
 
-	amountRows, err := s.deliveryStmts[deliverySelectSumAmount].QueryContext(ctx,
+	amountRows, err := s.deliveryStmts[selectSumAmountKey].QueryContext(ctx,
 		d.wID, 1, orders[0].oID,
 		d.wID, 2, orders[1].oID,
 		d.wID, 3, orders[2].oID,
@@ -145,19 +175,19 @@ func (w *Workloader) runDelivery(ctx context.Context, thread int) error {
 		d.wID, 10, orders[9].oID,
 	)
 	if err != nil {
-		return fmt.Errorf("exec %s failed %v", deliverySelectSumAmount, err)
+		return fmt.Errorf("exec %s failed %v", selectSumAmountKey, err)
 	}
 	defer amountRows.Close()
 	for amountRows.Next() {
 		var dID int
 		var amount float64
 		if err = amountRows.Scan(&dID, &amount); err != nil {
-			return fmt.Errorf("exec %s failed %v", deliverySelectSumAmount, err)
+			return fmt.Errorf("exec %s failed %v", selectSumAmountKey, err)
 		}
 		orders[dID-1].amount = amount
 	}
 	if err := amountRows.Err(); err != nil {
-		return fmt.Errorf("exec %s failed %v", deliverySelectSumAmount, err)
+		return fmt.Errorf("exec %s failed %v", selectSumAmountKey, err)
 	}
 
 	for i := 0; i < districtPerWarehouse; i++ {

@@ -18,15 +18,17 @@ const (
 )
 
 var (
-	newOrderSelectItemSQLs      [16]string
-	newOrderSelectStockSQLs     [16]string
-	newOrderInsertOrderLineSQLs [16]string
+	newOrderSelectItemSQLs          [16]string
+	newOrderSelectStockSQLs         [16]string
+	newOrderSelectStockSQLsODBC     [16]string
+	newOrderInsertOrderLineSQLs     [16]string
 )
 
 func init() {
 	for i := 5; i <= 15; i++ {
 		newOrderSelectItemSQLs[i] = genNewOrderSelectItemsSQL(i)
 		newOrderSelectStockSQLs[i] = genNewOrderSelectStockSQL(i)
+		newOrderSelectStockSQLsODBC[i] = genNewOrderSelectStockSQLODBC(i)
 		newOrderInsertOrderLineSQLs[i] = genNewOrderInsertOrderLineSQL(i)
 	}
 }
@@ -52,6 +54,17 @@ func genNewOrderSelectStockSQL(cnt int) string {
 		buf.WriteString("(?,?)")
 	}
 	buf.WriteString(") FOR UPDATE")
+	return buf.String()
+}
+
+func genNewOrderSelectStockSQLODBC(cnt int) string {
+	buf := bytes.NewBufferString("SELECT s_i_id, s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE ")
+	for i := 0; i < cnt; i++ {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		buf.WriteString("(s_w_id=? AND s_i_id=?)")
+	}
 	return buf.String()
 }
 
@@ -190,8 +203,14 @@ func (w *Workloader) runNewOrder(ctx context.Context, thread int) error {
 	oID := d.dNextOID
 
 	// Process 4
+	var oEntryD interface{}
+	if w.cfg.Driver == "odbc" {
+		oEntryD = time.Now()
+	} else {
+		oEntryD = time.Now().Format(timeFormat)
+	}
 	if _, err := s.newOrderStmts[newOrderInsertOrder].ExecContext(ctx, oID, d.dID, d.wID, d.cID,
-		time.Now().Format(timeFormat), d.oOlCnt, allLocal); err != nil {
+		oEntryD, d.oOlCnt, allLocal); err != nil {
 		return fmt.Errorf("exec %s failed %v", newOrderInsertOrder, err)
 	}
 
@@ -241,7 +260,12 @@ func (w *Workloader) runNewOrder(ctx context.Context, thread int) error {
 	}
 
 	// Process 7
-	selectStockSQL := newOrderSelectStockSQLs[len(items)]
+	var selectStockSQL string
+	if w.cfg.Driver == "odbc" {
+		selectStockSQL = newOrderSelectStockSQLsODBC[len(items)]
+	} else {
+		selectStockSQL = newOrderSelectStockSQLs[len(items)]
+	}
 	selectStockArgs := make([]interface{}, len(items)*2)
 	for i := range items {
 		selectStockArgs[i*2] = d.wID

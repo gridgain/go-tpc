@@ -45,6 +45,13 @@ func execute(timeoutCtx context.Context, w workload.Workloader, action string, t
 	var ctx context.Context
 	if action == "prepare" || action == "cleanup" || action == "check" {
 		ctx = w.InitThread(context.Background(), index)
+	} else if driver == odbcDriver {
+		// ODBC/GridGain: do NOT pass cancellable context into SQL operations.
+		// database/sql registers a cancel goroutine that calls driver-level
+		// Close on timeout, which races with in-flight CGO calls and causes
+		// a segfault in the GridGain ODBC C library.
+		// Instead, pass a non-cancellable context and check timeout manually.
+		ctx = w.InitThread(context.Background(), index)
 	} else {
 		ctx = w.InitThread(timeoutCtx, index)
 	}
@@ -69,7 +76,7 @@ func execute(timeoutCtx context.Context, w workload.Workloader, action string, t
 	for i := 0; i < count || count <= 0; i++ {
 		// Check if timeout has occurred before starting next query
 		select {
-		case <-ctx.Done():
+		case <-timeoutCtx.Done():
 			if !silence {
 				fmt.Printf("[%s] %s worker %d stopped due to timeout after %d iterations\n",
 					time.Now().Format("2006-01-02 15:04:05"), action, index, i)
@@ -81,7 +88,7 @@ func execute(timeoutCtx context.Context, w workload.Workloader, action string, t
 		err := w.Run(ctx, index)
 		if err != nil {
 			// Check if the error is due to timeout/cancellation
-			if ctx.Err() != nil {
+			if timeoutCtx.Err() != nil {
 				if !silence {
 					fmt.Printf("[%s] %s worker %d stopped due to timeout: %v\n",
 						time.Now().Format("2006-01-02 15:04:05"), action, index, err)

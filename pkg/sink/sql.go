@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// SQLTimestamp wraps a timestamp string so buildSQLRow emits TIMESTAMP '...' literal.
+type SQLTimestamp struct {
+	Val   string
+	Valid bool
+}
+
 // SQLSink inserts values to a database in batch.
 type SQLSink struct {
 	maxBatchRows int
@@ -77,6 +83,12 @@ func buildSQLRow(values []interface{}) string {
 		case sql.NullFloat64:
 			if v.Valid {
 				_, _ = fmt.Fprintf(&buf, "%f", v.Float64)
+			} else {
+				buf.WriteString("NULL")
+			}
+		case SQLTimestamp:
+			if v.Valid {
+				_, _ = fmt.Fprintf(&buf, "TIMESTAMP '%s'", v.Val)
 			} else {
 				buf.WriteString("NULL")
 			}

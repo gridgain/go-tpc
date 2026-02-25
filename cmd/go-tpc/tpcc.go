@@ -85,6 +85,12 @@ func executeTpcc(action string) {
 
 	fmt.Println("Finished")
 	w.OutputStats(true)
+
+	if driver == odbcDriver {
+		// GridGain ODBC driver segfaults in SQLFreeHandle during GC finalization.
+		// Exit immediately after printing results to avoid the crash.
+		os.Exit(0)
+	}
 }
 
 func registerTpcc(root *cobra.Command) {

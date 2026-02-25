@@ -26,6 +26,18 @@ func convertToPQ(query string, driver string) string {
 			i++ // repeated forever
 		}
 	}
+	if driver == "odbc" {
+		// Remove FOR UPDATE — GridGain 9 uses MVCC, no row-level locking
+		query = strings.Replace(query, " FOR UPDATE", "", -1)
+		// Replace LIMIT N with FETCH FIRST N ROWS ONLY (SQL standard)
+		query = strings.Replace(query, " LIMIT 1", " FETCH FIRST 1 ROWS ONLY", -1)
+		// Remove TiDB-specific hints
+		if idx := strings.Index(query, "/*+"); idx >= 0 {
+			if end := strings.Index(query[idx:], "*/"); end >= 0 {
+				query = query[:idx] + query[idx+end+2:]
+			}
+		}
+	}
 	return query
 }
 
