@@ -127,8 +127,9 @@ func (s *SQLSink) Flush(ctx context.Context) error {
 		return nil
 	}
 
+	const gridgainMaxRetries = 10
 	var err error
-	for i := 0; i < 1+s.retryCount; i++ {
+	for i := 0; i < 1+s.retryCount+gridgainMaxRetries; i++ {
 		_, err = s.db.ExecContext(ctx, s.buf.String())
 		if err == nil {
 			break
@@ -139,10 +140,21 @@ func (s *SQLSink) Flush(ctx context.Context) error {
 			}
 			break
 		}
+		// GridGain: optimistic lock conflict on concurrent INSERTs to the same table.
+		// The "try again later" hint means this is a transient conflict, not a real PK duplicate.
+		if strings.Contains(err.Error(), "PK unique constraint is violated") &&
+			strings.Contains(err.Error(), "try again later") {
+			fmt.Printf("exec statement error: %v, retrying (%d/%d)...\n", err, i+1, gridgainMaxRetries)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		// Generic retry (controlled by retryCount config)
 		if i < s.retryCount {
 			fmt.Printf("exec statement error: %v, try again later...\n", err)
 			time.Sleep(s.retryInterval)
+			continue
 		}
+		break
 	}
 
 	s.bufferedRows = 0
