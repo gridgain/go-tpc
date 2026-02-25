@@ -33,6 +33,8 @@ type CSVWorkLoader struct {
 
 // NewCSVWorkloader creates the tpc-c workloader to generate CSV files
 func NewCSVWorkloader(db *sql.DB, cfg *Config) (*CSVWorkLoader, error) {
+	noHints = cfg.NoHints
+
 	if cfg.Parts > cfg.Warehouses {
 		panic(fmt.Errorf("number warehouses %d must >= partition %d", cfg.Warehouses, cfg.Parts))
 	}

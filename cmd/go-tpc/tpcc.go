@@ -98,6 +98,7 @@ func registerTpcc(root *cobra.Command) {
 		Use: "tpcc",
 	}
 
+	cmd.PersistentFlags().BoolVar(&tpccConfig.NoHints, "no-hints", false, "Disable optimizer hints (e.g. TIDB_INLJ) for fair cross-database comparison")
 	cmd.PersistentFlags().IntVar(&tpccConfig.Parts, "parts", 1, "Number to partition warehouses")
 	cmd.PersistentFlags().IntVar(&tpccConfig.PartitionType, "partition-type", 1, "Partition type (1 - HASH, 2 - RANGE, 3 - LIST (like HASH), 4 - LIST (like RANGE)")
 	cmd.PersistentFlags().IntVar(&tpccConfig.Warehouses, "warehouses", 10, "Number of warehouses")

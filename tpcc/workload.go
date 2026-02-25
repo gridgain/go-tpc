@@ -92,6 +92,9 @@ type Config struct {
 
 	// automatic connection refresh interval to balance traffic across new replicas
 	ConnRefreshInterval time.Duration
+
+	// NoHints disables optimizer hints (e.g. TIDB_INLJ) for fair comparison across databases
+	NoHints bool
 }
 
 // Workloader is TPCC workload
@@ -120,6 +123,8 @@ func NewWorkloader(db *sql.DB, cfg *Config) (workload.Workloader, error) {
 	if db == nil && cfg.OutputType == "" {
 		panic(fmt.Errorf("failed to connect to database when loading data"))
 	}
+
+	noHints = cfg.NoHints
 
 	if cfg.Parts > cfg.Warehouses {
 		panic(fmt.Errorf("number warehouses %d must >= partition %d", cfg.Warehouses, cfg.Parts))

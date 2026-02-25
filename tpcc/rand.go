@@ -13,6 +13,19 @@ import (
 // https://go.dev/doc/database/querying
 // Note: Parameter placeholders in prepared statements vary depending on the DBMS and driver you’re using. For example, the pq driver for Postgres requires a placeholder like $1 instead of ?.
 
+// noHints disables optimizer hints (e.g. TIDB_INLJ) in queries.
+// Set from Config.NoHints during workloader initialization.
+var noHints bool
+
+func removeHints(query string) string {
+	if idx := strings.Index(query, "/*+"); idx >= 0 {
+		if end := strings.Index(query[idx:], "*/"); end >= 0 {
+			query = query[:idx] + query[idx+end+2:]
+		}
+	}
+	return query
+}
+
 func convertToPQ(query string, driver string) string {
 	// return strings.Replace(query, "?", "", -1)
 	if driver == "postgres" {
@@ -31,12 +44,10 @@ func convertToPQ(query string, driver string) string {
 		query = strings.Replace(query, " FOR UPDATE", "", -1)
 		// Replace LIMIT N with FETCH FIRST N ROWS ONLY (SQL standard)
 		query = strings.Replace(query, " LIMIT 1", " FETCH FIRST 1 ROWS ONLY", -1)
-		// Remove TiDB-specific hints
-		if idx := strings.Index(query, "/*+"); idx >= 0 {
-			if end := strings.Index(query[idx:], "*/"); end >= 0 {
-				query = query[:idx] + query[idx+end+2:]
-			}
-		}
+		query = removeHints(query)
+	}
+	if noHints {
+		query = removeHints(query)
 	}
 	return query
 }
