@@ -342,7 +342,17 @@ func (w *Workloader) Run(ctx context.Context, threadID int) (err error) {
 	}
 
 	start := time.Now()
-	err = txn.action(ctx, threadID)
+	if w.cfg.Driver == "cockroachdb" {
+		const maxRetries = 10
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			err = txn.action(ctx, threadID)
+			if err == nil || !isCRDBRetryable(err) {
+				break
+			}
+		}
+	} else {
+		err = txn.action(ctx, threadID)
+	}
 
 	w.rtMeasurement.Measure(txn.name, time.Now().Sub(start), err)
 

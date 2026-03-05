@@ -59,10 +59,19 @@ var (
 )
 
 const (
+<<<<<<< Updated upstream
 	createDBDDL   = "CREATE DATABASE "
 	mysqlDriver   = "mysql"
 	pgDriver      = "postgres"
 	customTlsName = "custom"
+=======
+	createDBDDL       = "CREATE DATABASE "
+	mysqlDriver       = "mysql"
+	pgDriver          = "postgres"
+	odbcDriver        = "odbc"
+	cockroachDriver   = "cockroachdb"
+	customTlsName     = "custom"
+>>>>>>> Stashed changes
 )
 
 type MuxDriver struct {
@@ -120,7 +129,7 @@ func newDB(targets []string, driver string, user string, password string, dbName
 			}
 			names[i] = dsn
 			drv = &mysql.MySQLDriver{}
-		case pgDriver:
+		case pgDriver, cockroachDriver:
 			if len(sslCA) > 0 || len(sslKey) > 0 || len(sslCert) > 0 {
 				panic("postgresql driver doesn't support TLS yet")
 			}
@@ -136,8 +145,12 @@ func newDB(targets []string, driver string, user string, password string, dbName
 		}
 	}
 
+	regDriver := driver
+	if driver == cockroachDriver {
+		regDriver = pgDriver
+	}
 	if len(names) == 1 {
-		return sql.Open(driver, names[0])
+		return sql.Open(regDriver, names[0])
 	}
 	drvName := driver + "+" + hex.EncodeToString(hash.Sum(nil))
 	for _, n := range sql.Drivers() {
@@ -166,8 +179,21 @@ func openDB() {
 		panic(err)
 	}
 	if err := globalDB.Ping(); err != nil {
+<<<<<<< Updated upstream
 		if isDBNotExist(err) {
 			tmpDB, _ = newDB(targets, driver, user, password, "", connParams)
+=======
+		if driver == odbcDriver {
+			// GridGain via ODBC: no CREATE DATABASE support, just fail
+			fmt.Printf("failed to ping db, err %v\n", err)
+			globalDB = nil
+		} else if isDBNotExist(err) {
+			fallbackDB := ""
+			if driver == cockroachDriver {
+				fallbackDB = "defaultdb"
+			}
+			tmpDB, _ = newDB(targets, driver, user, password, fallbackDB, connParams)
+>>>>>>> Stashed changes
 			defer tmpDB.Close()
 			if _, err := tmpDB.Exec(createDBDDL + dbName); err != nil {
 				panic(fmt.Errorf("failed to create database, err %v", err))
@@ -177,6 +203,25 @@ func openDB() {
 			globalDB = nil
 		}
 	} else {
+		// CockroachDB: lib/pq Ping() and SELECT 1 succeed even for non-existent
+		// databases. Use SHOW TABLES which requires a valid current database.
+		if driver == cockroachDriver {
+			if _, err := globalDB.Exec("SHOW TABLES"); err != nil {
+				if strings.Contains(err.Error(), "does not exist") ||
+					strings.Contains(err.Error(), "no database") {
+					globalDB.Close()
+					tmpDB, _ = newDB(targets, driver, user, password, "defaultdb", connParams)
+					defer tmpDB.Close()
+					if _, err := tmpDB.Exec(createDBDDL + dbName); err != nil {
+						panic(fmt.Errorf("failed to create database, err %v", err))
+					}
+					globalDB, err = newDB(targets, driver, user, password, dbName, connParams)
+					if err != nil {
+						panic(fmt.Errorf("failed to reconnect after creating database: %v", err))
+					}
+				}
+			}
+		}
 		globalDB.SetMaxIdleConns(threads + acThreads + 1)
 	}
 }
@@ -188,7 +233,7 @@ func isDBNotExist(err error) bool {
 	switch driver {
 	case mysqlDriver:
 		return strings.Contains(err.Error(), "Unknown database")
-	case pgDriver:
+	case pgDriver, cockroachDriver:
 		msg := err.Error()
 		return strings.HasPrefix(msg, "pq: database") && strings.HasSuffix(msg, "does not exist")
 	}
@@ -216,7 +261,11 @@ func main() {
 	rootCmd.PersistentFlags().IntVarP(&statusPort, "statusPort", "S", 10080, "Database status port")
 	rootCmd.PersistentFlags().IntVarP(&threads, "threads", "T", 1, "Thread concurrency")
 	rootCmd.PersistentFlags().IntVarP(&acThreads, "acThreads", "t", 1, "OLAP client concurrency, only for CH-benCHmark")
+<<<<<<< Updated upstream
 	rootCmd.PersistentFlags().StringVarP(&driver, "driver", "d", mysqlDriver, "Database driver: mysql, postgres")
+=======
+	rootCmd.PersistentFlags().StringVarP(&driver, "driver", "d", mysqlDriver, "Database driver: mysql, postgres, cockroachdb, odbc")
+>>>>>>> Stashed changes
 	rootCmd.PersistentFlags().DurationVar(&totalTime, "time", 1<<63-1, "Total execution time")
 	rootCmd.PersistentFlags().IntVar(&totalCount, "count", 0, "Total execution count, 0 means infinite")
 	rootCmd.PersistentFlags().BoolVar(&dropData, "dropdata", false, "Cleanup data before prepare")

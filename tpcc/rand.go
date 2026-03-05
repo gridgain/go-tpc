@@ -15,7 +15,7 @@ import (
 
 func convertToPQ(query string, driver string) string {
 	// return strings.Replace(query, "?", "", -1)
-	if driver == "postgres" {
+	if driver == "postgres" || driver == "cockroachdb" {
 		i := 1
 		for {
 			prev := query
@@ -26,6 +26,19 @@ func convertToPQ(query string, driver string) string {
 			i++ // repeated forever
 		}
 	}
+<<<<<<< Updated upstream
+=======
+	if driver == "odbc" {
+		// Remove FOR UPDATE — GridGain 9 uses MVCC, no row-level locking
+		query = strings.Replace(query, " FOR UPDATE", "", -1)
+		// Replace LIMIT N with FETCH FIRST N ROWS ONLY (SQL standard)
+		query = strings.Replace(query, " LIMIT 1", " FETCH FIRST 1 ROWS ONLY", -1)
+		query = removeHints(query)
+	}
+	if noHints || driver == "cockroachdb" {
+		query = removeHints(query)
+	}
+>>>>>>> Stashed changes
 	return query
 }
 
