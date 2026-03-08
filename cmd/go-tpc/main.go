@@ -141,7 +141,7 @@ func newDB(targets []string, driver string, user string, password string, dbName
 				dsn = dsn + connParams
 			}
 			names[i] = dsn
-			drv = &odbc.Driver{}
+			drv = odbc.GlobalDriver()
 		default:
 			panic(fmt.Errorf("unknown driver: %q", driver))
 		}

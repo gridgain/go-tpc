@@ -62,6 +62,11 @@ func initDriver() error {
 	return nil
 }
 
+// GlobalDriver returns the package-level initialized Driver singleton.
+func GlobalDriver() *Driver {
+	return &drv
+}
+
 func (d *Driver) Close() error {
 	// TODO(brainman): who will call (*Driver).Close (to dispose all opened handles)?
 	h := d.h
