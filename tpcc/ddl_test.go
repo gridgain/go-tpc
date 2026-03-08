@@ -3,7 +3,7 @@ package tpcc
 import "testing"
 
 func TestAppendPartition(t *testing.T) {
-	ddl := newDDLManager(4, false, 4, PartitionTypeHash, true)
+	ddl := newDDLManager(4, false, 4, PartitionTypeHash, true, "mysql")
 	s := ddl.appendPartition("<table definition>", "Id")
 	expected := `<table definition>
 PARTITION BY HASH(Id)
@@ -12,7 +12,7 @@ PARTITIONS 4`
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 4, PartitionTypeRange, true)
+	ddl = newDDLManager(4, false, 4, PartitionTypeRange, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY RANGE (Id)
@@ -24,7 +24,7 @@ PARTITION BY RANGE (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 23, PartitionTypeRange, true)
+	ddl = newDDLManager(4, false, 23, PartitionTypeRange, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY RANGE (Id)
@@ -36,7 +36,7 @@ PARTITION BY RANGE (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 12, PartitionTypeListAsHash, true)
+	ddl = newDDLManager(4, false, 12, PartitionTypeListAsHash, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)
@@ -48,7 +48,7 @@ PARTITION BY LIST (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(3, false, 4, PartitionTypeListAsHash, true)
+	ddl = newDDLManager(3, false, 4, PartitionTypeListAsHash, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)
@@ -59,7 +59,7 @@ PARTITION BY LIST (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 23, PartitionTypeListAsHash, true)
+	ddl = newDDLManager(4, false, 23, PartitionTypeListAsHash, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)
@@ -71,7 +71,7 @@ PARTITION BY LIST (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 12, PartitionTypeListAsRange, true)
+	ddl = newDDLManager(4, false, 12, PartitionTypeListAsRange, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)
@@ -83,7 +83,7 @@ PARTITION BY LIST (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(3, false, 4, PartitionTypeListAsRange, true)
+	ddl = newDDLManager(3, false, 4, PartitionTypeListAsRange, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)
@@ -94,7 +94,7 @@ PARTITION BY LIST (Id)
 		t.Errorf("got '%s' expected '%s'", s, expected)
 	}
 
-	ddl = newDDLManager(4, false, 23, PartitionTypeListAsRange, true)
+	ddl = newDDLManager(4, false, 23, PartitionTypeListAsRange, true, "mysql")
 	s = ddl.appendPartition("<table definition>", "Id")
 	expected = `<table definition>
 PARTITION BY LIST (Id)

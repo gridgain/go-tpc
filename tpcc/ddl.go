@@ -23,10 +23,11 @@ type ddlManager struct {
 	partitionType     int
 	useFK             bool
 	useClusteredIndex bool
+	driver            string
 }
 
-func newDDLManager(parts int, useFK bool, warehouses, partitionType int, useClusteredIndex bool) *ddlManager {
-	return &ddlManager{parts: parts, useFK: useFK, warehouses: warehouses, partitionType: partitionType, useClusteredIndex: useClusteredIndex}
+func newDDLManager(parts int, useFK bool, warehouses, partitionType int, useClusteredIndex bool, driver string) *ddlManager {
+	return &ddlManager{parts: parts, useFK: useFK, warehouses: warehouses, partitionType: partitionType, useClusteredIndex: useClusteredIndex, driver: driver}
 }
 
 func (w *ddlManager) createTableDDL(ctx context.Context, query string, tableName string) error {
@@ -412,7 +413,21 @@ alter table stock add constraint s_item_fkey
 		}
 
 	} else if driver == "odbc" {
-		// GridGain 9 DDL
+		// GridGain 9 DDL — zones must be created before tables.
+		// tpcc_zone: 64 partitions for all transactional tables (colocated by warehouse).
+		// tpcc_item_zone: 1 partition, fully replicated read-only item table.
+		s := getTPCCState(ctx)
+		zoneStatements := []string{
+			"CREATE ZONE IF NOT EXISTS tpcc_zone (PARTITIONS 64, REPLICAS 3) STORAGE PROFILES ['default']",
+			"CREATE ZONE IF NOT EXISTS tpcc_item_zone (PARTITIONS 1, REPLICAS 3) STORAGE PROFILES ['default']",
+		}
+		for _, stmt := range zoneStatements {
+			fmt.Printf("%s\n", stmt)
+			if _, err := s.Conn.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
+		}
+
 		// Warehouse
 		query := `
 CREATE TABLE IF NOT EXISTS warehouse (
@@ -426,7 +441,7 @@ CREATE TABLE IF NOT EXISTS warehouse (
 	w_tax DECIMAL(4, 4),
 	w_ytd DECIMAL(12, 2),
 	PRIMARY KEY (w_id)
-)`
+) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableWareHouse); err != nil {
 			return err
@@ -447,7 +462,7 @@ CREATE TABLE IF NOT EXISTS district (
 	d_ytd DECIMAL(12, 2),
 	d_next_o_id INT,
 	PRIMARY KEY (d_w_id, d_id)
-) COLOCATE BY (d_w_id)`
+) COLOCATE BY (d_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableDistrict); err != nil {
 			return err
@@ -478,7 +493,7 @@ CREATE TABLE IF NOT EXISTS customer (
 	c_delivery_cnt INT,
 	c_data VARCHAR(500),
 	PRIMARY KEY(c_w_id, c_d_id, c_id)
-) COLOCATE BY (c_w_id)`
+) COLOCATE BY (c_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableCustomer); err != nil {
 			return err
@@ -498,8 +513,8 @@ CREATE TABLE IF NOT EXISTS history (
 	h_amount DECIMAL(6, 2),
 	h_data VARCHAR(24),
 	h_id BIGINT NOT NULL,
-	PRIMARY KEY (h_id)
-)`
+	PRIMARY KEY (h_w_id, h_id)
+) COLOCATE BY (h_w_id) ZONE tpcc_zone`
 		if err := w.createTableDDL(ctx, query, tableHistory); err != nil {
 			return err
 		}
@@ -517,7 +532,7 @@ CREATE TABLE IF NOT EXISTS new_order (
 	no_d_id INT NOT NULL,
 	no_w_id INT NOT NULL,
 	PRIMARY KEY(no_w_id, no_d_id, no_o_id)
-) COLOCATE BY (no_w_id)`
+) COLOCATE BY (no_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableNewOrder); err != nil {
 			return err
@@ -535,7 +550,7 @@ CREATE TABLE IF NOT EXISTS orders (
 	o_ol_cnt INT,
 	o_all_local INT,
 	PRIMARY KEY(o_w_id, o_d_id, o_id)
-) COLOCATE BY (o_w_id)`
+) COLOCATE BY (o_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableOrders); err != nil {
 			return err
@@ -558,7 +573,7 @@ CREATE TABLE IF NOT EXISTS order_line (
 	ol_amount DECIMAL(6, 2),
 	ol_dist_info VARCHAR(24),
 	PRIMARY KEY(ol_w_id, ol_d_id, ol_o_id, ol_number)
-) COLOCATE BY (ol_w_id)`
+) COLOCATE BY (ol_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableOrderLine); err != nil {
 			return err
@@ -584,7 +599,7 @@ CREATE TABLE IF NOT EXISTS stock (
 	s_remote_cnt INT,
 	s_data VARCHAR(50),
 	PRIMARY KEY(s_w_id, s_i_id)
-) COLOCATE BY (s_w_id)`
+) COLOCATE BY (s_w_id) ZONE tpcc_zone`
 
 		if err := w.createTableDDL(ctx, query, tableStock); err != nil {
 			return err
@@ -598,7 +613,7 @@ CREATE TABLE IF NOT EXISTS item (
 	i_price DECIMAL(5, 2),
 	i_data VARCHAR(50),
 	PRIMARY KEY(i_id)
-)`
+) ZONE tpcc_item_zone`
 		if err := w.createTableDDL(ctx, query, tableItem); err != nil {
 			return err
 		}
@@ -890,6 +905,17 @@ func (w *ddlManager) dropTable(ctx context.Context) error {
 		fmt.Printf("DROP TABLE IF EXISTS %s\n", tbl)
 		if _, err := s.Conn.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", tbl)); err != nil {
 			return err
+		}
+	}
+
+	// Drop zones for GridGain ODBC driver.
+	if w.driver == "odbc" {
+		for _, zone := range []string{"tpcc_zone", "tpcc_item_zone"} {
+			stmt := fmt.Sprintf("DROP ZONE IF EXISTS %s", zone)
+			fmt.Printf("%s\n", stmt)
+			if _, err := s.Conn.ExecContext(ctx, stmt); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -156,7 +156,7 @@ func NewWorkloader(db *sql.DB, cfg *Config) (workload.Workloader, error) {
 		db:                  db,
 		cfg:                 cfg,
 		initLoadTime:        time.Now().Format(timeFormat),
-		ddlManager:          newDDLManager(cfg.Parts, cfg.UseFK, cfg.Warehouses, cfg.PartitionType, cfg.UseClusteredIndex),
+		ddlManager:          newDDLManager(cfg.Parts, cfg.UseFK, cfg.Warehouses, cfg.PartitionType, cfg.UseClusteredIndex, cfg.Driver),
 		rtMeasurement:       measurement.NewMeasurement(resetMaxLat),
 		waitTimeMeasurement: measurement.NewMeasurement(resetMaxLat),
 	}
